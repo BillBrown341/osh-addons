@@ -37,7 +37,6 @@ public class KrakenSdrOutputSettings extends AbstractSensorOutput<KrakenSdrSenso
     private long lastSetTimeMillis = System.currentTimeMillis();
     private DataRecord dataStruct;
     private DataEncoding dataEncoding;
-    KrakenUtility util = parentSensor.util;
 
     /**
      * Creates a new output for the sensor driver.
@@ -146,7 +145,12 @@ public class KrakenSdrOutputSettings extends AbstractSensorOutput<KrakenSdrSenso
         return accumulator / (double) MAX_NUM_TIMING_SAMPLES;
     }
 
-    public void setData() {
+    /**
+     * Called by {@link KrakenSdrSensor} when a WebSocket {@code "settings"} message arrives.
+     *
+     * @param settingsMsg the parsed JSON object from the WebSocket frame
+     */
+    public void setData(JsonObject settingsMsg) {
         DataBlock dataBlock;
         try {
             if (latestRecord == null) {
@@ -156,31 +160,32 @@ public class KrakenSdrOutputSettings extends AbstractSensorOutput<KrakenSdrSenso
             }
             synchronized (histogramLock) {
                 int setIndex = setCount % MAX_NUM_TIMING_SAMPLES;
-                // Get a sampling time for latest set based on previous set sampling time
                 timingHistogram[setIndex] = System.currentTimeMillis() - lastSetTimeMillis;
-                // Set latest sampling time to now
                 lastSetTimeMillis = timingHistogram[setIndex];
             }
             ++setCount;
 
-            // RETRIEVE CURRENT JSON SETTINGS AS A JSON OBJECT
-            JsonObject currentSettings = util.getSettings();
+            // Use the timestamp embedded in the WS message when available
+            long tsMs = settingsMsg.has("timestamp")
+                    ? settingsMsg.get("timestamp").getAsLong()
+                    : System.currentTimeMillis();
 
-            if(currentSettings == null || currentSettings.entrySet().isEmpty()){
-                return;
-            }
-
-            dataBlock.setDoubleValue(0, System.currentTimeMillis() / 1000d);                                  // time
-            dataBlock.setBooleanValue(1, currentSettings.get("en_remote_control").getAsBoolean());
-            dataBlock.setDoubleValue(2, currentSettings.get("center_freq").getAsDouble());
-            dataBlock.setDoubleValue(3, currentSettings.get("uniform_gain").getAsDouble());
-            dataBlock.setStringValue(4, currentSettings.get("ant_arrangement").getAsString());
-            dataBlock.setDoubleValue(5, currentSettings.get("ant_spacing_meters").getAsDouble());
-            dataBlock.setStringValue(6, currentSettings.get("doa_method").getAsString());
-            dataBlock.setStringValue(7, (currentSettings.get("station_id") != null) ? currentSettings.get("station_id").getAsString() : "NO Name");
-            dataBlock.setStringValue(8, currentSettings.get("location_source").getAsString());
-            dataBlock.setStringValue(9, currentSettings.get("latitude").getAsString());
-            dataBlock.setStringValue(10, currentSettings.get("longitude").getAsString());
+            dataBlock.setDoubleValue(0, tsMs / 1000d);
+            dataBlock.setBooleanValue(1, settingsMsg.has("en_remote_control")
+                    && settingsMsg.get("en_remote_control").getAsBoolean());
+            dataBlock.setDoubleValue(2, settingsMsg.get("center_freq").getAsDouble());
+            dataBlock.setDoubleValue(3, settingsMsg.get("uniform_gain").getAsDouble());
+            dataBlock.setStringValue(4, settingsMsg.get("ant_arrangement").getAsString());
+            dataBlock.setDoubleValue(5, settingsMsg.get("ant_spacing_meters").getAsDouble());
+            dataBlock.setStringValue(6, settingsMsg.get("doa_method").getAsString());
+            dataBlock.setStringValue(7, settingsMsg.has("station_id")
+                    ? settingsMsg.get("station_id").getAsString() : "NO Name");
+            dataBlock.setStringValue(8, settingsMsg.has("location_source")
+                    ? settingsMsg.get("location_source").getAsString() : "");
+            dataBlock.setStringValue(9, settingsMsg.has("latitude")
+                    ? settingsMsg.get("latitude").getAsString() : "0");
+            dataBlock.setStringValue(10, settingsMsg.has("longitude")
+                    ? settingsMsg.get("longitude").getAsString() : "0");
 
             latestRecord = dataBlock;
             latestRecordTime = System.currentTimeMillis();
@@ -188,7 +193,7 @@ public class KrakenSdrOutputSettings extends AbstractSensorOutput<KrakenSdrSenso
             eventHandler.publish(new DataEvent(latestRecordTime, KrakenSdrOutputSettings.this, dataBlock));
 
         } catch (Exception e) {
-            getLogger().error("Error reading from Kraken Device: {}", e.getMessage());
+            getLogger().error("Error processing KrakenSDR settings message: {}", e.getMessage());
         }
     }
 
